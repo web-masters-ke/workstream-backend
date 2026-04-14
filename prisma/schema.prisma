@@ -1,0 +1,838 @@
+// WorkStream — Prisma schema
+// Source: DDD.txt §5.2, BED.txt §3.3
+//
+// IMPORTANT: Notifications + Media models at the bottom are load-bearing —
+// they are consumed by src/modules/notifications and src/modules/media.
+// Extend with care.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum UserRole {
+  BUSINESS
+  AGENT
+  SUPERVISOR
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  PENDING
+  SUSPENDED
+  DELETED
+}
+
+enum BusinessStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+  PENDING_VERIFICATION
+}
+
+enum BusinessMemberRole {
+  OWNER
+  MANAGER
+  SUPERVISOR
+  MEMBER
+}
+
+enum AgentStatus {
+  PENDING_VERIFICATION
+  VERIFIED
+  ACTIVE
+  SUSPENDED
+  DEACTIVATED
+}
+
+enum AvailabilityStatus {
+  ONLINE
+  OFFLINE
+  BUSY
+  ON_BREAK
+  ON_SHIFT
+}
+
+enum KycStatus {
+  NOT_SUBMITTED
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum TaskStatus {
+  PENDING
+  ASSIGNED
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+  CANCELLED
+  ON_HOLD
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum TaskAssignmentStatus {
+  OFFERED
+  ACCEPTED
+  DECLINED
+  REASSIGNED
+  COMPLETED
+  FAILED
+}
+
+enum ShiftStatus {
+  SCHEDULED
+  ACTIVE
+  COMPLETED
+  MISSED
+  CANCELLED
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+  TASK
+  SUPPORT
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  SYSTEM
+  VOICE_NOTE
+}
+
+enum CallType {
+  VOICE
+  VIDEO
+}
+
+enum CallStatus {
+  INITIATED
+  RINGING
+  ONGOING
+  COMPLETED
+  MISSED
+  FAILED
+}
+
+enum WalletOwnerType {
+  AGENT
+  BUSINESS
+  PLATFORM
+}
+
+enum WalletStatus {
+  ACTIVE
+  FROZEN
+  CLOSED
+}
+
+enum TransactionType {
+  CREDIT
+  DEBIT
+  TASK_PAYMENT
+  COMMISSION
+  PAYOUT
+  REFUND
+  FEE
+  TOPUP
+  WITHDRAWAL
+  ADJUSTMENT
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+  CANCELLED
+}
+
+enum InvoiceStatus {
+  DRAFT
+  ISSUED
+  PAID
+  OVERDUE
+  CANCELLED
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  REJECTED
+  ESCALATED
+}
+
+enum DisputeCategory {
+  PAYMENT
+  TASK_QUALITY
+  AGENT_CONDUCT
+  BUSINESS_CONDUCT
+  OTHER
+}
+
+enum NotificationChannel {
+  PUSH
+  IN_APP
+  EMAIL
+  SMS
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+enum MediaKind {
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+}
+
+enum AuditSeverity {
+  INFO
+  WARN
+  CRITICAL
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id            String     @id @default(uuid())
+  email         String     @unique
+  phone         String?    @unique
+  passwordHash  String?
+  firstName     String?
+  lastName      String?
+  name          String?
+  avatarUrl     String?
+  role          UserRole   @default(BUSINESS)
+  status        UserStatus @default(ACTIVE)
+  emailVerified Boolean    @default(false)
+  phoneVerified Boolean    @default(false)
+  mfaEnabled    Boolean    @default(false)
+  mfaSecret     String?
+  lastLoginAt   DateTime?
+
+  fcmTokens String[] @default([])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  agentProfile     Agent?
+  businessMembers  BusinessMember[]
+  sessions         UserSession[]
+  passwordResets   PasswordResetToken[]
+  notifications    Notification[]
+  mediaAssets      MediaAsset[]
+  createdTasks     Task[]                    @relation("TaskCreator")
+  taskHistory      TaskHistory[]
+  conversations    ConversationParticipant[]
+  messages         Message[]
+  wallets          Wallet[]
+  performedActions AuditLog[]                @relation("AuditActor")
+  disputesFiled    Dispute[]                 @relation("DisputeFiler")
+  qaReviewsDone    QAReview[]                @relation("QAReviewer")
+
+  @@index([role])
+  @@index([status])
+}
+
+model UserSession {
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken String    @unique
+  userAgent    String?
+  ipAddress    String?
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  createdAt    DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ---------------------------------------------------------------------------
+// Business / Workspace
+// ---------------------------------------------------------------------------
+
+model Business {
+  id           String         @id @default(uuid())
+  name         String
+  slug         String         @unique
+  industry     String?
+  description  String?
+  logoUrl      String?
+  website      String?
+  contactEmail String?
+  contactPhone String?
+  status       BusinessStatus @default(PENDING_VERIFICATION)
+  planId       String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  plan       SubscriptionPlan? @relation(fields: [planId], references: [id])
+  workspaces Workspace[]
+  members    BusinessMember[]
+  agents     Agent[]
+  tasks      Task[]
+  wallet     Wallet?
+  invoices   Invoice[]
+
+  @@index([status])
+}
+
+model Workspace {
+  id          String   @id @default(uuid())
+  businessId  String
+  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tasks   Task[]
+  members BusinessMember[]
+
+  @@unique([businessId, name])
+  @@index([businessId])
+}
+
+model BusinessMember {
+  id          String             @id @default(uuid())
+  businessId  String
+  business    Business           @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspaceId String?
+  workspace   Workspace?         @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  role        BusinessMemberRole @default(MEMBER)
+  invitedAt   DateTime           @default(now())
+  joinedAt    DateTime?
+
+  @@unique([businessId, userId])
+  @@index([userId])
+}
+
+model SubscriptionPlan {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  priceCents  Int      @default(0)
+  currency    String   @default("USD")
+  features    Json?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  businesses Business[]
+}
+
+// ---------------------------------------------------------------------------
+// Agent / Workforce
+// ---------------------------------------------------------------------------
+
+model Agent {
+  id              String             @id @default(uuid())
+  userId          String             @unique
+  user            User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  businessId      String?
+  business        Business?          @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  status          AgentStatus        @default(PENDING_VERIFICATION)
+  kycStatus       KycStatus          @default(NOT_SUBMITTED)
+  availability    AvailabilityStatus @default(OFFLINE)
+  bio             String?
+  headline        String?
+  rating          Decimal            @default(0) @db.Decimal(3, 2)
+  totalTasks      Int                @default(0)
+  completedTasks  Int                @default(0)
+  timezone        String?
+  country         String?
+  city            String?
+  hourlyRateCents Int?
+  currency        String             @default("USD")
+  verifiedAt      DateTime?
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+
+  skills            AgentSkill[]
+  availabilitySlots AgentAvailabilitySlot[]
+  performance       PerformanceMetric[]
+  assignments       TaskAssignment[]
+  shifts            Shift[]
+  payouts           Payout[]
+  qaReviews         QAReview[]
+
+  @@index([status])
+  @@index([availability])
+  @@index([businessId])
+}
+
+model AgentSkill {
+  id                String   @id @default(uuid())
+  agentId           String
+  agent             Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  skill             String
+  proficiencyLevel  Int      @default(1) // 1-5
+  yearsOfExperience Int?
+  createdAt         DateTime @default(now())
+
+  @@unique([agentId, skill])
+  @@index([skill])
+}
+
+model AgentAvailabilitySlot {
+  id        String   @id @default(uuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  dayOfWeek Int // 0 Sun .. 6 Sat
+  startTime String // HH:mm
+  endTime   String // HH:mm
+  timezone  String   @default("UTC")
+  createdAt DateTime @default(now())
+
+  @@index([agentId])
+}
+
+// ---------------------------------------------------------------------------
+// Tasks / Jobs
+// ---------------------------------------------------------------------------
+
+model Task {
+  id             String       @id @default(uuid())
+  businessId     String
+  business       Business     @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  workspaceId    String?
+  workspace      Workspace?   @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  createdById    String
+  createdBy      User         @relation("TaskCreator", fields: [createdById], references: [id])
+  title          String
+  description    String?
+  status         TaskStatus   @default(PENDING)
+  priority       TaskPriority @default(MEDIUM)
+  category       String?
+  requiredSkills String[]     @default([])
+  budgetCents    Int?
+  currency       String       @default("USD")
+  dueAt          DateTime?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  cancelledAt    DateTime?
+  slaMinutes     Int?
+  metadata       Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  assignments   TaskAssignment[]
+  history       TaskHistory[]
+  qaReviews     QAReview[]
+  disputes      Dispute[]
+  conversations Conversation[]
+
+  @@index([businessId, status])
+  @@index([status])
+  @@index([priority])
+  @@index([createdAt])
+}
+
+model TaskAssignment {
+  id          String               @id @default(uuid())
+  taskId      String
+  task        Task                 @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  agentId     String
+  agent       Agent                @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  status      TaskAssignmentStatus @default(OFFERED)
+  assignedAt  DateTime             @default(now())
+  acceptedAt  DateTime?
+  declinedAt  DateTime?
+  completedAt DateTime?
+  notes       String?
+
+  @@unique([taskId, agentId])
+  @@index([agentId, status])
+}
+
+model TaskHistory {
+  id         String      @id @default(uuid())
+  taskId     String
+  task       Task        @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  actorId    String?
+  actor      User?       @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  fromStatus TaskStatus?
+  toStatus   TaskStatus
+  note       String?
+  createdAt  DateTime    @default(now())
+
+  @@index([taskId, createdAt])
+}
+
+// ---------------------------------------------------------------------------
+// Workforce — Shifts & Schedules
+// ---------------------------------------------------------------------------
+
+model Shift {
+  id        String      @id @default(uuid())
+  agentId   String
+  agent     Agent       @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  startAt   DateTime
+  endAt     DateTime
+  status    ShiftStatus @default(SCHEDULED)
+  notes     String?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+
+  @@index([agentId, startAt])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Communication
+// ---------------------------------------------------------------------------
+
+model Conversation {
+  id        String           @id @default(uuid())
+  type      ConversationType @default(DIRECT)
+  title     String?
+  taskId    String?
+  task      Task?            @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  participants ConversationParticipant[]
+  messages     Message[]
+  calls        CallSession[]
+
+  @@index([taskId])
+}
+
+model ConversationParticipant {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  joinedAt       DateTime     @default(now())
+  leftAt         DateTime?
+  lastReadAt     DateTime?
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  type           MessageType  @default(TEXT)
+  body           String?
+  attachmentUrl  String?
+  metadata       Json?
+  editedAt       DateTime?
+  deletedAt      DateTime?
+  createdAt      DateTime     @default(now())
+
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+}
+
+model CallSession {
+  id             String        @id @default(uuid())
+  conversationId String?
+  conversation   Conversation? @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  initiatorId    String
+  type           CallType      @default(VOICE)
+  status         CallStatus    @default(INITIATED)
+  startedAt      DateTime?
+  endedAt        DateTime?
+  durationSec    Int?
+  recordingUrl   String?
+  createdAt      DateTime      @default(now())
+
+  @@index([initiatorId])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Payments & Wallet
+// ---------------------------------------------------------------------------
+
+model Wallet {
+  id           String          @id @default(uuid())
+  ownerType    WalletOwnerType
+  ownerId      String
+  userId       String?
+  user         User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+  businessId   String?         @unique
+  business     Business?       @relation(fields: [businessId], references: [id], onDelete: SetNull)
+  balanceCents BigInt          @default(0)
+  currency     String          @default("USD")
+  status       WalletStatus    @default(ACTIVE)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  transactions WalletTransaction[]
+
+  @@unique([ownerType, ownerId])
+  @@index([userId])
+}
+
+model WalletTransaction {
+  id                String            @id @default(uuid())
+  walletId          String
+  wallet            Wallet            @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  type              TransactionType
+  status            TransactionStatus @default(PENDING)
+  amountCents       BigInt
+  currency          String            @default("USD")
+  balanceAfterCents BigInt?
+  reference         String?           @unique
+  counterpartyType  String?
+  counterpartyId    String?
+  description       String?
+  metadata          Json?
+  createdAt         DateTime          @default(now())
+  completedAt       DateTime?
+
+  @@index([walletId, createdAt])
+  @@index([status])
+  @@index([type])
+}
+
+model Payout {
+  id          String       @id @default(uuid())
+  agentId     String
+  agent       Agent        @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  amountCents BigInt
+  currency    String       @default("USD")
+  status      PayoutStatus @default(PENDING)
+  method      String? // e.g. bank_transfer, mpesa
+  destination String?
+  reference   String?      @unique
+  metadata    Json?
+  processedAt DateTime?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  @@index([agentId, status])
+  @@index([status])
+}
+
+model Invoice {
+  id          String        @id @default(uuid())
+  businessId  String
+  business    Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  number      String        @unique
+  amountCents BigInt
+  taxCents    BigInt        @default(0)
+  totalCents  BigInt
+  currency    String        @default("USD")
+  status      InvoiceStatus @default(DRAFT)
+  issuedAt    DateTime?
+  dueAt       DateTime?
+  paidAt      DateTime?
+  lineItems   Json?
+  metadata    Json?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  @@index([businessId, status])
+}
+
+// ---------------------------------------------------------------------------
+// Performance / QA
+// ---------------------------------------------------------------------------
+
+model PerformanceMetric {
+  id             String   @id @default(uuid())
+  agentId        String
+  agent          Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  periodStart    DateTime
+  periodEnd      DateTime
+  tasksCompleted Int      @default(0)
+  tasksFailed    Int      @default(0)
+  avgResponseSec Int?
+  avgRating      Decimal? @db.Decimal(3, 2)
+  slaBreaches    Int      @default(0)
+  revenueCents   BigInt   @default(0)
+  createdAt      DateTime @default(now())
+
+  @@index([agentId, periodStart])
+}
+
+model QAReview {
+  id         String   @id @default(uuid())
+  taskId     String
+  task       Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  agentId    String
+  agent      Agent    @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  reviewerId String
+  reviewer   User     @relation("QAReviewer", fields: [reviewerId], references: [id])
+  score      Int // 1-5
+  comment    String?
+  criteria   Json?
+  createdAt  DateTime @default(now())
+
+  @@index([agentId, createdAt])
+  @@index([taskId])
+}
+
+// ---------------------------------------------------------------------------
+// Disputes
+// ---------------------------------------------------------------------------
+
+model Dispute {
+  id          String          @id @default(uuid())
+  filedById   String
+  filedBy     User            @relation("DisputeFiler", fields: [filedById], references: [id])
+  taskId      String?
+  task        Task?           @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  category    DisputeCategory
+  status      DisputeStatus   @default(OPEN)
+  subject     String
+  description String
+  resolution  String?
+  resolvedAt  DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([status])
+  @@index([filedById])
+}
+
+// ---------------------------------------------------------------------------
+// Notifications (existing — extended)
+// ---------------------------------------------------------------------------
+
+model Notification {
+  id        String              @id @default(uuid())
+  userId    String
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  channel   NotificationChannel @default(IN_APP)
+  status    NotificationStatus  @default(PENDING)
+  data      Json?
+  imageUrl  String?
+  readAt    DateTime?
+  sentAt    DateTime?
+  error     String?
+  createdAt DateTime            @default(now())
+
+  @@index([userId, createdAt])
+  @@index([status])
+}
+
+// ---------------------------------------------------------------------------
+// Media (existing)
+// ---------------------------------------------------------------------------
+
+model MediaAsset {
+  id           String    @id @default(uuid())
+  userId       String?
+  user         User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  kind         MediaKind @default(IMAGE)
+  key          String    @unique
+  originalName String
+  mimeType     String
+  sizeBytes    Int
+  width        Int?
+  height       Int?
+  durationMs   Int?
+  url          String
+  thumbnailUrl String?
+  checksum     String?
+  metadata     Json?
+  createdAt    DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  @@index([kind])
+}
+
+// ---------------------------------------------------------------------------
+// Audit / System
+// ---------------------------------------------------------------------------
+
+model AuditLog {
+  id         String        @id @default(uuid())
+  actorId    String?
+  actor      User?         @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+  entityType String
+  entityId   String?
+  action     String
+  severity   AuditSeverity @default(INFO)
+  ipAddress  String?
+  userAgent  String?
+  metadata   Json?
+  createdAt  DateTime      @default(now())
+
+  @@index([entityType, entityId])
+  @@index([actorId, createdAt])
+  @@index([action])
+}
+
+model SystemSetting {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     Json
+  category  String?
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@index([category])
+}
+
+model FeatureFlag {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  enabled     Boolean  @default(false)
+  description String?
+  rolloutPct  Int      @default(0)
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+}
