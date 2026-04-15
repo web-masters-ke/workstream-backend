@@ -61,6 +61,27 @@ export class AdminService {
     return user;
   }
 
+  async deleteUser(id: string) {
+    const user = await this.prisma.user.findUnique({ where: { id } });
+    if (!user) throw new NotFoundException('User not found');
+
+    // Remove FK-dependent records first
+    await this.prisma.task.deleteMany({ where: { createdById: id } });
+    await this.prisma.agent.deleteMany({ where: { userId: id } });
+    await this.prisma.userSession.deleteMany({ where: { userId: id } });
+    await this.prisma.passwordResetToken.deleteMany({ where: { userId: id } });
+    await this.prisma.notification.deleteMany({ where: { userId: id } });
+    const wallets = await this.prisma.wallet.findMany({ where: { userId: id }, select: { id: true } });
+    if (wallets.length) {
+      await this.prisma.walletTransaction.deleteMany({
+        where: { walletId: { in: wallets.map((w) => w.id) } },
+      });
+      await this.prisma.wallet.deleteMany({ where: { userId: id } });
+    }
+    await this.prisma.user.delete({ where: { id } });
+    return { deleted: true };
+  }
+
   async updateUserStatus(id: string, status: string, actorId?: string) {
     const updated = await this.prisma.user.update({ where: { id }, data: { status: status as any } });
     await this.record(actorId ?? null, 'User', id, 'USER_STATUS_UPDATED', { newStatus: status }).catch(() => {});

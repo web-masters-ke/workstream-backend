@@ -91,6 +91,12 @@ export class AdminController {
     return this.service.getUser(id);
   }
 
+  @Delete('users/:id')
+  @Roles('ADMIN')
+  deleteUser(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.deleteUser(id);
+  }
+
   @Patch('users/:id/status')
   @Roles('ADMIN')
   updateUserStatus(@Param('id', ParseUUIDPipe) id: string, @Body('status') status: string) {
