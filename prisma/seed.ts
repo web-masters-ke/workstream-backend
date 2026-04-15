@@ -111,8 +111,6 @@ async function main() {
     contactPhone: d.phone,
     status: 'ACTIVE',
     planId: d.plan.id,
-    country: 'KE',
-    teamSize: rnd(['1–10','11–50','51–200']),
   }})));
 
   const [acme, swift, nexus] = businesses;
@@ -319,7 +317,7 @@ async function main() {
   for (let i = 0; i < 40; i++) {
     const agentWallet = await prisma.wallet.findFirst({ where: { userId: agentUserRecords[i % agentUserRecords.length].id } });
     if (!agentWallet) continue;
-    const type = rnd(['TASK_PAYMENT','TASK_PAYMENT','TASK_PAYMENT','TOPUP','PAYOUT']);
+    const type = rnd(['TASK_PAYMENT','TASK_PAYMENT','TASK_PAYMENT','TOPUP','PAYOUT']) as any;
     const amtCents = BigInt(rndInt(300, 5000) * 100);
     await prisma.walletTransaction.create({ data: {
       walletId: agentWallet.id,
@@ -338,9 +336,9 @@ async function main() {
     const tax = amtCents * 16n / 100n;
     await prisma.invoice.create({ data: {
       businessId: biz.id,
-      invoiceNumber: `INV-2026-${String(i + 1).padStart(4, '0')}`,
-      status: rnd(['DRAFT','PENDING','PAID','PAID','PAID','OVERDUE']),
-      amountCents, taxCents: tax, totalCents: amtCents + tax,
+      number: `INV-2026-${String(i + 1).padStart(4, '0')}`,
+      status: rnd(['DRAFT','ISSUED','PAID','PAID','PAID','OVERDUE']),
+      amountCents: amtCents, taxCents: tax, totalCents: amtCents + tax,
       currency: 'KES',
       dueAt: daysFrom(rndInt(-10, 30)),
       issuedAt: daysAgo(rndInt(5, 60)),
@@ -357,9 +355,8 @@ async function main() {
     await prisma.shift.create({ data: {
       businessId: biz.id, agentId: agent.id,
       startAt: start, endAt: end,
-      status: rnd(['SCHEDULED','IN_PROGRESS','COMPLETED','COMPLETED']),
-      totalMinutes: 480,
-      breaks: [] as any,
+      status: rnd(['SCHEDULED','ACTIVE','COMPLETED','COMPLETED']),
+      notes: `Auto-seeded shift ${i + 1}`,
     }});
   }
 
@@ -384,11 +381,11 @@ async function main() {
 
   // ── Disputes ──────────────────────────────────────────────────────────────────
   const disputeData = [
-    { by: agentUserRecords[0], task: 0, cat: 'PAYMENT',    sub: 'Underpayment on completed task',         desc: 'Received 60% of agreed rate. Task was completed on time and above QA threshold.' },
-    { by: agentUserRecords[2], task: 3, cat: 'TASK_SCOPE',  sub: 'Task scope changed after acceptance',    desc: 'Scope increased 3x after I accepted. No extra compensation offered.' },
-    { by: bizOwnerUsers[0],   task: 6, cat: 'QUALITY',     sub: 'Agent submitted incomplete work',        desc: 'Only 40% of tickets were handled correctly. Requesting re-review.' },
-    { by: agentUserRecords[5], task: 9, cat: 'BEHAVIOUR',   sub: 'Supervisor communication issues',        desc: 'Repeatedly harassed via chat messages outside working hours.' },
-    { by: bizOwnerUsers[1],   task: 2, cat: 'PAYMENT',    sub: 'Duplicate invoice charged',              desc: 'Billed twice for March. Reference INV-2026-0003 and INV-2026-0004.' },
+    { by: agentUserRecords[0], task: 0, cat: 'PAYMENT',         sub: 'Underpayment on completed task',         desc: 'Received 60% of agreed rate. Task was completed on time and above QA threshold.' },
+    { by: agentUserRecords[2], task: 3, cat: 'TASK_QUALITY',   sub: 'Task scope changed after acceptance',    desc: 'Scope increased 3x after I accepted. No extra compensation offered.' },
+    { by: bizOwnerUsers[0],   task: 6, cat: 'TASK_QUALITY',   sub: 'Agent submitted incomplete work',        desc: 'Only 40% of tickets were handled correctly. Requesting re-review.' },
+    { by: agentUserRecords[5], task: 9, cat: 'AGENT_CONDUCT',  sub: 'Supervisor communication issues',        desc: 'Repeatedly harassed via chat messages outside working hours.' },
+    { by: bizOwnerUsers[1],   task: 2, cat: 'PAYMENT',         sub: 'Duplicate invoice charged',              desc: 'Billed twice for March. Reference INV-2026-0003 and INV-2026-0004.' },
   ];
 
   for (const d of disputeData) {
@@ -424,15 +421,18 @@ async function main() {
   // ── Performance metrics ───────────────────────────────────────────────────────
   for (let i = 0; i < 15; i++) {
     const agent = agents[i % agents.length];
+    const pStart = daysAgo(rndInt(30, 90));
+    const pEnd   = new Date(pStart.getTime() + 30 * 86400_000);
     await prisma.performanceMetric.create({ data: {
       agentId: agent.id,
-      period: `2026-${String(rndInt(1, 4)).padStart(2, '0')}`,
+      periodStart: pStart,
+      periodEnd: pEnd,
       tasksCompleted: rndInt(15, 80),
-      tasksCancelled: rndInt(0, 5),
-      avgQaScore: new Prisma.Decimal(rndInt(35, 50) / 10),
-      avgResponseMinutes: rndInt(5, 60),
+      tasksFailed: rndInt(0, 5),
+      avgRating: new Prisma.Decimal(rndInt(35, 50) / 10),
+      avgResponseSec: rndInt(300, 3600),
       slaBreaches: rndInt(0, 3),
-      earningsCents: BigInt(rndInt(5000, 40000) * 100),
+      revenueCents: BigInt(rndInt(5000, 40000) * 100),
     }}).catch(() => {});
   }
 
