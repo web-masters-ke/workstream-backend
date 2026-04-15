@@ -10,6 +10,8 @@ import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { randomBytes } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { MailService } from '../notifications/mail.service';
+import { SmsService } from '../notifications/sms.service';
 import {
   ChangePasswordDto,
   ForgotPasswordDto,
@@ -27,6 +29,8 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly jwt: JwtService,
     private readonly config: ConfigService,
+    private readonly mail: MailService,
+    private readonly sms: SmsService,
   ) {}
 
   async register(dto: RegisterDto) {
@@ -172,11 +176,15 @@ export class AuthService {
   }
 
   async sendOtp(dto: SendOtpDto) {
-    // Resolve userId by phone or email
+    // Normalise: identifier field (sent by Flutter + web) maps to email or phone
+    const email = dto.email ?? (dto.identifier?.includes('@') ? dto.identifier : undefined);
+    const phone = dto.phone ?? (dto.identifier && !dto.identifier.includes('@') ? dto.identifier : undefined);
+
+    // Resolve userId
     let userId: string | undefined;
-    if (dto.email) {
+    if (email) {
       const u = await this.prisma.user.findUnique({
-        where: { email: dto.email.toLowerCase() },
+        where: { email: email.toLowerCase() },
         select: { id: true },
       });
       userId = u?.id;
@@ -185,7 +193,6 @@ export class AuthService {
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-    // Store in PasswordResetToken reusing the table; prefix token with purpose
     const stored = `otp:${dto.purpose}:${otp}`;
     await this.prisma.passwordResetToken.create({
       data: {
@@ -195,15 +202,31 @@ export class AuthService {
       },
     });
 
-    // In production: SMS/email the OTP. For now, log to console.
-    console.log(`[OTP] ${dto.purpose} code for ${dto.phone ?? dto.email}: ${otp}`);
+    const purposeLabel = dto.purpose === 'register' ? 'Verify your account' : 'Reset your password';
+    const smsText = `WorkStream: ${otp} is your verification code. Valid 10 min.`;
+
+    // Send via email
+    if (email) {
+      this.mail.send({
+        to: email,
+        subject: `${purposeLabel} — your code is ${otp}`,
+        html: `<p>Hi,</p><p>${purposeLabel}. Your 6-digit code is:</p><h2 style="font-size:32px;letter-spacing:8px;font-family:monospace">${otp}</h2><p>This code expires in 10 minutes. If you didn't request this, ignore this email.</p>`,
+        text: `Your WorkStream verification code is: ${otp}. It expires in 10 minutes.`,
+      }).catch(() => {});
+    }
+
+    // Send via SMS
+    if (phone) {
+      this.sms.send({ to: phone, message: smsText }).catch(() => {});
+    }
+
     return { sent: true };
   }
 
   async verifyOtp(dto: VerifyOtpDto) {
-    // Token stored as "otp:<purpose>:<code>" — caller sends just the 6-digit code
-    // Support both raw code and full stored token
-    const tokenValue = dto.token.startsWith('otp:') ? dto.token : `otp:${dto.token}`;
+    // Accept token (web) or otp (Flutter) field names; support full stored format
+    const rawCode = dto.token ?? dto.otp ?? '';
+    const tokenValue = rawCode.startsWith('otp:') ? rawCode : `otp:${rawCode}`;
 
     // Search by partial match pattern — find all non-expired otp tokens
     const rows = await this.prisma.passwordResetToken.findMany({
@@ -218,7 +241,7 @@ export class AuthService {
     const match = rows.find(
       (r) =>
         r.token === tokenValue ||
-        r.token.endsWith(`:${dto.token}`),
+        r.token.endsWith(`:${rawCode}`),
     );
 
     if (!match) {

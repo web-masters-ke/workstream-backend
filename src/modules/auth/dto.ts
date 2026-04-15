@@ -86,13 +86,28 @@ export class SendOtpDto {
   @IsOptional()
   email?: string;
 
+  /** Flutter / web send a unified identifier field (email or phone) */
+  @IsString()
+  @IsOptional()
+  identifier?: string;
+
   @IsEnum(['register', 'reset', 'mfa'])
   purpose!: 'register' | 'reset' | 'mfa';
 }
 
 export class VerifyOtpDto {
+  /** Web sends token; Flutter sends otp — accept both */
   @IsString()
-  token!: string;
+  @IsOptional()
+  token?: string;
+
+  @IsString()
+  @IsOptional()
+  otp?: string;
+
+  @IsString()
+  @IsOptional()
+  identifier?: string;
 
   @IsString()
   @IsOptional()
