@@ -84,9 +84,33 @@ export class WorkspacesController {
     return { ok: true };
   }
 
-  // GET /workspaces — current user's business workspaces
+  // GET /workspaces — current user's business workspaces (admins see all)
   @Get()
   async list(@CurrentUser() user: JwtUser) {
+    const isAdmin = user.role === 'ADMIN' || user.role === 'SUPERVISOR';
+    if (isAdmin) {
+      const workspaces = await this.prisma.workspace.findMany({
+        orderBy: { createdAt: 'desc' },
+        include: {
+          business: { select: { id: true, name: true, contactEmail: true } },
+          _count: { select: { members: true, tasks: true } },
+        },
+      });
+      return workspaces.map((w) => ({
+        id: w.id,
+        name: w.name,
+        description: w.description,
+        businessId: w.businessId,
+        businessName: w.business?.name ?? null,
+        timezone: w.timezone ?? 'UTC',
+        currency: w.currency ?? 'USD',
+        memberCount: w._count.members,
+        taskCount: w._count.tasks,
+        createdAt: w.createdAt,
+        updatedAt: w.updatedAt,
+      }));
+    }
+
     const member = await this.prisma.businessMember.findFirst({
       where: { userId: user.sub },
       select: { businessId: true },
@@ -98,21 +122,50 @@ export class WorkspacesController {
     });
   }
 
-  // POST /workspaces — create a workspace in the current user's business
+  // POST /workspaces — create a workspace (admins supply businessId directly)
   @Post()
-  async create(@CurrentUser() user: JwtUser, @Body() dto: { name: string; description?: string; timezone?: string; currency?: string; categories?: string[]; slaDefaults?: Record<string, number> }) {
-    const member = await this.prisma.businessMember.findFirst({
-      where: { userId: user.sub },
-      select: { businessId: true },
-    });
-    if (!member) return { error: 'No business found for this user' };
-    return this.prisma.workspace.create({
+  async create(@CurrentUser() user: JwtUser, @Body() dto: { name: string; description?: string; businessId?: string; timezone?: string; currency?: string }) {
+    const isAdmin = user.role === 'ADMIN' || user.role === 'SUPERVISOR';
+
+    let bizId: string;
+    if (isAdmin && dto.businessId) {
+      bizId = dto.businessId;
+    } else {
+      const member = await this.prisma.businessMember.findFirst({
+        where: { userId: user.sub },
+        select: { businessId: true },
+      });
+      if (!member) return { error: 'No business found for this user' };
+      bizId = member.businessId;
+    }
+
+    const workspace = await this.prisma.workspace.create({
       data: {
-        businessId: member.businessId,
+        businessId: bizId,
         name: dto.name,
         description: dto.description,
+        timezone: dto.timezone ?? 'UTC',
+        currency: dto.currency ?? 'USD',
+      },
+      include: {
+        business: { select: { id: true, name: true } },
+        _count: { select: { members: true, tasks: true } },
       },
     });
+
+    return {
+      id: workspace.id,
+      name: workspace.name,
+      description: workspace.description,
+      businessId: workspace.businessId,
+      businessName: workspace.business?.name ?? null,
+      timezone: workspace.timezone ?? 'UTC',
+      currency: workspace.currency ?? 'USD',
+      memberCount: workspace._count.members,
+      taskCount: workspace._count.tasks,
+      createdAt: workspace.createdAt,
+      updatedAt: workspace.updatedAt,
+    };
   }
 
   // PATCH /workspaces/:id — update a workspace

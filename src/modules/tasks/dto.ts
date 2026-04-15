@@ -5,9 +5,10 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUrl,
   IsUUID,
 } from 'class-validator';
-import { TaskPriority, TaskStatus } from '@prisma/client';
+import { TaskPriority, TaskStatus, SubmissionRound, SubmissionType } from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 export class CreateTaskDto {
@@ -121,4 +122,45 @@ export class ListTasksDto extends PaginationDto {
   @IsUUID()
   @IsOptional()
   workspaceId?: string;
+}
+
+export class CreateSubmissionDto {
+  @IsEnum(['FIRST_DRAFT', 'SECOND_DRAFT', 'FINAL'])
+  round!: SubmissionRound;
+
+  @IsEnum(['FILE', 'LINK', 'TEXT', 'OTHER'])
+  type!: SubmissionType;
+
+  @IsString()
+  @IsOptional()
+  content?: string; // text body or URL
+
+  @IsString()
+  @IsOptional()
+  fileUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  fileName?: string;
+
+  @IsInt()
+  @IsOptional()
+  fileSize?: number;
+
+  @IsString()
+  @IsOptional()
+  mimeType?: string;
+
+  @IsString()
+  @IsOptional()
+  notes?: string;
+}
+
+export class ReviewSubmissionDto {
+  @IsEnum(['APPROVED', 'REVISION_REQUESTED', 'REJECTED'])
+  status!: 'APPROVED' | 'REVISION_REQUESTED' | 'REJECTED';
+
+  @IsString()
+  @IsOptional()
+  reviewNote?: string;
 }

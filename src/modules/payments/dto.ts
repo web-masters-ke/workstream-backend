@@ -74,7 +74,8 @@ export class RecordTransactionDto {
 
 export class RequestPayoutDto {
   @IsUUID()
-  agentId!: string;
+  @IsOptional()
+  agentId?: string;
 
   @IsInt()
   @Min(1)
@@ -87,6 +88,22 @@ export class RequestPayoutDto {
   @IsString()
   @IsOptional()
   destination?: string;
+
+  @IsUUID()
+  @IsOptional()
+  businessId?: string;
+
+  @IsString()
+  @IsOptional()
+  taskId?: string;
+
+  @IsString()
+  @IsOptional()
+  note?: string;
+
+  @IsString()
+  @IsOptional()
+  type?: string; // ESCROW_RELEASE | DIRECT_PAYMENT
 }
 
 export class UpdatePayoutDto {
@@ -108,6 +125,22 @@ export class CreateInvoiceDto {
   @IsString()
   @IsOptional()
   currency?: string;
+
+  @IsString()
+  @IsOptional()
+  description?: string;
+
+  @IsString()
+  @IsOptional()
+  dueAt?: string;
+
+  @IsString()
+  @IsOptional()
+  issuedAt?: string;
+
+  @IsString()
+  @IsOptional()
+  type?: string;
 
   @IsOptional()
   lineItems?: any[];

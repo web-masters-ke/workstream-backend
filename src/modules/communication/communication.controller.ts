@@ -8,6 +8,7 @@ import {
   Post,
   Query,
   UseGuards,
+  Request,
 } from '@nestjs/common';
 import { CommunicationService } from './communication.service';
 import {
@@ -79,17 +80,48 @@ export class CommunicationController {
   typingIndicator(
     @Param('id', ParseUUIDPipe) id: string,
     @CurrentUser() user: JwtUser,
+    @Body() body: { isTyping?: boolean },
   ) {
-    // WebSocket gateway handles real-time typing events.
-    // This REST endpoint is a fallback stub.
-    void id;
-    void user;
-    return { ok: true };
+    return this.service.sendTyping(id, user.sub, body.isTyping ?? true);
   }
 
   @Post('calls')
   startCall(@CurrentUser() user: JwtUser, @Body() dto: StartCallDto) {
     return this.service.startCall(user.sub, dto);
+  }
+
+  @Get('calls')
+  listCalls(@CurrentUser() user: JwtUser) {
+    return this.service.listCalls(user.sub);
+  }
+
+  // IMPORTANT: static /calls/* routes must be declared BEFORE /calls/:id to avoid route conflict
+
+  @Get('calls/scheduled')
+  listScheduledCalls(@CurrentUser() user: JwtUser) {
+    return this.service.listScheduledCalls(user.sub);
+  }
+
+  /** Mint a JaaS JWT for the calling user — frontend passes this to Jitsi as `token` */
+  @Get('calls/jaas-token')
+  getJaasToken(
+    @CurrentUser() user: JwtUser,
+    @Query('roomName') roomName: string,
+  ) {
+    return this.service.mintJaasToken(user, roomName);
+  }
+
+  @Post('calls/:id/activate')
+  activateCall(
+    @CurrentUser() user: JwtUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.service.activateScheduledCall(id, user.sub);
+  }
+
+  @Get('calls/:id')
+  getCall(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.getCall(id);
   }
 
   @Patch('calls/:id')
@@ -98,10 +130,5 @@ export class CommunicationController {
     @Body() dto: UpdateCallDto,
   ) {
     return this.service.updateCall(id, dto);
-  }
-
-  @Get('calls')
-  listCalls(@CurrentUser() user: JwtUser) {
-    return this.service.listCalls(user.sub);
   }
 }

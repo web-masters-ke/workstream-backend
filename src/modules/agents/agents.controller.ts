@@ -15,6 +15,7 @@ import {
   AddAvailabilitySlotDto,
   AddSkillDto,
   CreateAgentDto,
+  InviteAgentDto,
   ListAgentsDto,
   SetAvailabilityDto,
   UpdateAgentDto,
@@ -35,6 +36,11 @@ export class AgentsController {
     return this.service.create(dto);
   }
 
+  @Post('invite')
+  invite(@Body() dto: InviteAgentDto) {
+    return this.service.invite(dto);
+  }
+
   @Get()
   list(@Query() dto: ListAgentsDto) {
     return this.service.list(dto);
@@ -43,6 +49,26 @@ export class AgentsController {
   @Get(':id')
   findOne(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.findOne(id);
+  }
+
+  @Get(':id/performance')
+  getPerformance(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.getPerformance(id);
+  }
+
+  @Get(':id/earnings')
+  getEarnings(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.getEarnings(id);
+  }
+
+  @Get(':id/disputes')
+  getDisputes(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.getDisputes(id);
+  }
+
+  @Get(':id/tasks')
+  getTasks(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.getTasks(id);
   }
 
   @Patch(':id')

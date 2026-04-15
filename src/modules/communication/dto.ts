@@ -62,11 +62,38 @@ export class StartCallDto {
   @IsEnum(CallType)
   @IsOptional()
   type?: CallType;
+
+  @IsString()
+  @IsOptional()
+  roomName?: string;
+
+  @IsString()
+  @IsOptional()
+  meetingUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  meetingTitle?: string;
+
+  @IsString()
+  @IsOptional()
+  participantIds?: string;
+
+  /** ISO-8601 timestamp — if in the future the call is scheduled (status=INITIATED) */
+  @IsString()
+  @IsOptional()
+  scheduledAt?: string;
+
+  /** Recurrence rule: "DAILY" | "WEEKDAYS" | "WEEKLY" | "BIWEEKLY" | "MONTHLY" */
+  @IsString()
+  @IsOptional()
+  recurrenceRule?: string;
 }
 
 export class UpdateCallDto {
   @IsEnum(CallStatus)
-  status!: CallStatus;
+  @IsOptional()
+  status?: CallStatus;
 
   @IsInt()
   @IsOptional()
@@ -75,4 +102,12 @@ export class UpdateCallDto {
   @IsUrl({ require_tld: false })
   @IsOptional()
   recordingUrl?: string;
+
+  @IsString()
+  @IsOptional()
+  meetingTitle?: string;
+
+  @IsString()
+  @IsOptional()
+  participantIds?: string;
 }

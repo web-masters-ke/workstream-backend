@@ -10,8 +10,10 @@ import { pageParams, PaginationDto } from '../../common/dto/pagination.dto';
 import {
   AssignTaskDto,
   AssignmentResponseDto,
+  CreateSubmissionDto,
   CreateTaskDto,
   ListTasksDto,
+  ReviewSubmissionDto,
   TransitionTaskDto,
   UpdateTaskDto,
 } from './dto';
@@ -20,11 +22,12 @@ import {
 const ALLOWED: Record<TaskStatus, TaskStatus[]> = {
   PENDING: ['ASSIGNED', 'CANCELLED', 'ON_HOLD'],
   ASSIGNED: ['IN_PROGRESS', 'CANCELLED', 'ON_HOLD', 'PENDING'],
-  IN_PROGRESS: ['COMPLETED', 'FAILED', 'ON_HOLD', 'CANCELLED'],
+  IN_PROGRESS: ['UNDER_REVIEW', 'COMPLETED', 'FAILED', 'ON_HOLD', 'CANCELLED'],
+  UNDER_REVIEW: ['IN_PROGRESS', 'COMPLETED', 'FAILED', 'CANCELLED'],
   ON_HOLD: ['IN_PROGRESS', 'CANCELLED', 'PENDING'],
-  COMPLETED: [],
+  COMPLETED: ['IN_PROGRESS', 'PENDING'],
   FAILED: ['PENDING'],
-  CANCELLED: [],
+  CANCELLED: ['PENDING'],
 };
 
 @Injectable()
@@ -56,6 +59,39 @@ export class TasksService {
       });
       return task;
     });
+  }
+
+  async listForAgent(agentId: string, dto: ListTasksDto) {
+    const { skip, limit, page } = pageParams(dto);
+    const where: any = {
+      assignments: { some: { agentId } },
+    };
+    if (dto.status) where.status = dto.status;
+    if (dto.priority) where.priority = dto.priority;
+    if (dto.search) {
+      where.OR = [
+        { title: { contains: dto.search, mode: 'insensitive' } },
+        { description: { contains: dto.search, mode: 'insensitive' } },
+      ];
+    }
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.task.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          assignments: {
+            where: { agentId },
+            include: {
+              agent: { include: { user: { select: { id: true, name: true } } } },
+            },
+          },
+        },
+      }),
+      this.prisma.task.count({ where }),
+    ]);
+    return { items, total, page, limit };
   }
 
   async list(dto: ListTasksDto) {
@@ -155,6 +191,72 @@ export class TasksService {
             totalTasks: { increment: 1 },
           },
         });
+
+        // Auto-pay agents from business wallet when task completes
+        if (task.budgetCents && task.budgetCents > 0) {
+          const assignments = await tx.taskAssignment.findMany({
+            where: { taskId, status: { in: ['ACCEPTED', 'OFFERED'] } },
+            select: { agentId: true },
+          });
+
+          if (assignments.length > 0) {
+            const businessWallet = await tx.wallet.findUnique({
+              where: { businessId: task.businessId },
+            });
+
+            if (businessWallet && businessWallet.balanceCents >= BigInt(task.budgetCents)) {
+              const perAgent = Math.floor(task.budgetCents / assignments.length);
+              let bizBal = businessWallet.balanceCents;
+
+              for (const { agentId } of assignments) {
+                const agentWallet = await tx.wallet.findUnique({
+                  where: { ownerType_ownerId: { ownerType: 'AGENT', ownerId: agentId } },
+                });
+                if (!agentWallet) continue;
+
+                // Debit business wallet
+                bizBal = bizBal - BigInt(perAgent);
+                await tx.wallet.update({
+                  where: { id: businessWallet.id },
+                  data: { balanceCents: bizBal },
+                });
+                await tx.walletTransaction.create({
+                  data: {
+                    walletId: businessWallet.id,
+                    type: 'DEBIT',
+                    status: 'COMPLETED',
+                    amountCents: BigInt(perAgent),
+                    currency: businessWallet.currency,
+                    balanceAfterCents: bizBal,
+                    reference: `task:${taskId}:pay:${agentId}`,
+                    description: `Task payment: "${task.title}"`,
+                    completedAt: new Date(),
+                  },
+                });
+
+                // Credit agent wallet
+                const agentNewBal = agentWallet.balanceCents + BigInt(perAgent);
+                await tx.wallet.update({
+                  where: { id: agentWallet.id },
+                  data: { balanceCents: agentNewBal },
+                });
+                await tx.walletTransaction.create({
+                  data: {
+                    walletId: agentWallet.id,
+                    type: 'TASK_PAYMENT',
+                    status: 'COMPLETED',
+                    amountCents: BigInt(perAgent),
+                    currency: agentWallet.currency,
+                    balanceAfterCents: agentNewBal,
+                    reference: `task:${taskId}`,
+                    description: `Payment for completed task: "${task.title}"`,
+                    completedAt: new Date(),
+                  },
+                });
+              }
+            }
+          }
+        }
       }
       return updated;
     });
@@ -373,6 +475,98 @@ export class TasksService {
       ...t,
       minutesOverdue: Math.floor((now.getTime() - t.dueAt!.getTime()) / 60000),
     }));
+  }
+
+  async listSubmissions(taskId: string) {
+    await this.assertExists(taskId);
+    const items = await this.prisma.taskSubmission.findMany({
+      where: { taskId },
+      orderBy: { submittedAt: 'desc' },
+      include: {
+        agent: {
+          select: { user: { select: { name: true, firstName: true, lastName: true } } },
+        },
+      },
+    });
+    return items.map((s) => ({
+      ...s,
+      agentName: (s.agent as any)?.user?.name
+        ?? [(s.agent as any)?.user?.firstName, (s.agent as any)?.user?.lastName].filter(Boolean).join(' ')
+        ?? 'Agent',
+    }));
+  }
+
+  async createSubmission(taskId: string, agentUserId: string, dto: CreateSubmissionDto) {
+    await this.assertExists(taskId);
+
+    const agent = await this.prisma.agent.findUnique({
+      where: { userId: agentUserId },
+      select: { id: true },
+    });
+    if (!agent) throw new ForbiddenException('Agent profile not found');
+
+    const assigned = await this.prisma.taskAssignment.findFirst({
+      where: { taskId, agentId: agent.id, status: 'ACCEPTED' },
+    });
+    if (!assigned) throw new ForbiddenException('You are not assigned to this task');
+
+    const submission = await this.prisma.taskSubmission.create({
+      data: {
+        taskId,
+        agentId: agent.id,
+        round: dto.round,
+        type: dto.type,
+        content: dto.content ?? null,
+        fileUrl: dto.fileUrl ?? null,
+        fileName: dto.fileName ?? null,
+        fileSize: dto.fileSize ?? null,
+        mimeType: dto.mimeType ?? null,
+        notes: dto.notes ?? null,
+        status: 'SUBMITTED',
+      },
+    });
+
+    // Move task to UNDER_REVIEW if it's in progress
+    await this.prisma.task.updateMany({
+      where: { id: taskId, status: 'IN_PROGRESS' },
+      data: { status: 'UNDER_REVIEW' },
+    });
+
+    return submission;
+  }
+
+  async reviewSubmission(taskId: string, submissionId: string, dto: ReviewSubmissionDto) {
+    await this.assertExists(taskId);
+
+    const submission = await this.prisma.taskSubmission.findUnique({
+      where: { id: submissionId },
+    });
+    if (!submission || submission.taskId !== taskId) {
+      throw new NotFoundException('Submission not found');
+    }
+
+    const updated = await this.prisma.taskSubmission.update({
+      where: { id: submissionId },
+      data: {
+        status: dto.status,
+        reviewNote: dto.reviewNote ?? null,
+        reviewedAt: new Date(),
+      },
+    });
+
+    if (dto.status === 'APPROVED') {
+      await this.prisma.task.update({
+        where: { id: taskId },
+        data: { status: 'COMPLETED', completedAt: new Date() },
+      });
+    } else if (dto.status === 'REVISION_REQUESTED') {
+      await this.prisma.task.updateMany({
+        where: { id: taskId, status: 'UNDER_REVIEW' },
+        data: { status: 'IN_PROGRESS' },
+      });
+    }
+
+    return updated;
   }
 
   private async assertExists(id: string) {

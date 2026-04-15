@@ -22,6 +22,7 @@ import { PaymentsModule } from './modules/payments/payments.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { QAModule } from './modules/qa/qa.module';
+import { MarketplaceModule } from './modules/marketplace/marketplace.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { QAModule } from './modules/qa/qa.module';
     AnalyticsModule,
     AdminModule,
     QAModule,
+    MarketplaceModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },

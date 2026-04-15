@@ -15,8 +15,10 @@ import { TasksService } from './tasks.service';
 import {
   AssignmentResponseDto,
   AssignTaskDto,
+  CreateSubmissionDto,
   CreateTaskDto,
   ListTasksDto,
+  ReviewSubmissionDto,
   TransitionTaskDto,
   UpdateTaskDto,
 } from './dto';
@@ -61,7 +63,17 @@ export class TasksController {
   }
 
   @Get()
-  list(@Query() dto: ListTasksDto) {
+  async list(@CurrentUser() user: JwtUser, @Query() dto: ListTasksDto) {
+    // Agents only see their own assigned tasks
+    if (user.role === 'AGENT') {
+      const agent = await this.prisma.agent.findUnique({
+        where: { userId: user.sub },
+        select: { id: true },
+      });
+      if (agent) {
+        return this.service.listForAgent(agent.id, dto);
+      }
+    }
     return this.service.list(dto);
   }
 
@@ -117,6 +129,29 @@ export class TasksController {
   @Get(':id/history')
   history(@Param('id', ParseUUIDPipe) id: string) {
     return this.service.history(id);
+  }
+
+  @Get(':id/submissions')
+  listSubmissions(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.listSubmissions(id);
+  }
+
+  @Post(':id/submissions')
+  createSubmission(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: JwtUser,
+    @Body() dto: CreateSubmissionDto,
+  ) {
+    return this.service.createSubmission(id, user.sub, dto);
+  }
+
+  @Patch(':id/submissions/:subId')
+  reviewSubmission(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('subId', ParseUUIDPipe) subId: string,
+    @Body() dto: ReviewSubmissionDto,
+  ) {
+    return this.service.reviewSubmission(id, subId, dto);
   }
 
   @Post(':id/escalate')

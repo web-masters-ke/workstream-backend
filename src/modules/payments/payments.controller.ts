@@ -101,7 +101,22 @@ export class PaymentsController {
     return this.service.updatePayout(id, dto);
   }
 
+  /** Approve a pending payout — debits agent wallet and marks COMPLETED */
+  @Patch('payouts/:id/approve')
+  @Roles('ADMIN')
+  approvePayout(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.updatePayout(id, { status: 'COMPLETED' });
+  }
+
+  /** Reject a pending payout — no wallet debit, marks FAILED */
+  @Patch('payouts/:id/reject')
+  @Roles('ADMIN')
+  rejectPayout(@Param('id', ParseUUIDPipe) id: string) {
+    return this.service.updatePayout(id, { status: 'FAILED' });
+  }
+
   @Get('payouts')
+  @Roles('ADMIN')
   listPayouts(@Query('agentId') agentId?: string) {
     return this.service.listPayouts(agentId);
   }

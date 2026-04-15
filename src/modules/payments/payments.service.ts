@@ -235,19 +235,98 @@ export class PaymentsService {
 
   // ---- Payouts ----
   async requestPayout(dto: RequestPayoutDto) {
-    const wallet = await this.prisma.wallet.findUnique({
-      where: {
-        ownerType_ownerId: { ownerType: 'AGENT', ownerId: dto.agentId },
-      },
+    const amountCents = BigInt(dto.amountCents);
+    const isAdminRelease = dto.type === 'ESCROW_RELEASE' || dto.type === 'DIRECT_PAYMENT';
+    const ref = `PAY-${Date.now()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`;
+
+    if (isAdminRelease) {
+      // Admin-initiated: deduct from business wallet (if specified), credit agent wallet,
+      // complete immediately — no approval queue needed.
+      return this.prisma.$transaction(async (tx) => {
+        // 1. Deduct from business wallet
+        if (dto.businessId) {
+          const bizWallet = await tx.wallet.findUnique({ where: { businessId: dto.businessId } });
+          if (bizWallet) {
+            if (bizWallet.balanceCents < amountCents) {
+              throw new BadRequestException('Insufficient business wallet balance');
+            }
+            const bizNewBal = bizWallet.balanceCents - amountCents;
+            await tx.wallet.update({ where: { id: bizWallet.id }, data: { balanceCents: bizNewBal } });
+            await tx.walletTransaction.create({
+              data: {
+                walletId: bizWallet.id,
+                type: 'PAYOUT',
+                status: 'COMPLETED',
+                amountCents,
+                currency: bizWallet.currency,
+                balanceAfterCents: bizNewBal,
+                reference: `${ref}-BIZ`,
+                description: dto.note ? `Escrow release: ${dto.note}` : 'Escrow release to agent',
+                completedAt: new Date(),
+                metadata: { agentId: dto.agentId, taskId: dto.taskId } as any,
+              },
+            });
+          }
+        }
+
+        // 2. Credit agent wallet
+        if (dto.agentId) {
+          const agentWallet = await tx.wallet.findFirst({
+            where: { ownerType: 'AGENT', ownerId: dto.agentId },
+          });
+          if (agentWallet) {
+            const agentNewBal = agentWallet.balanceCents + amountCents;
+            await tx.wallet.update({ where: { id: agentWallet.id }, data: { balanceCents: agentNewBal } });
+            await tx.walletTransaction.create({
+              data: {
+                walletId: agentWallet.id,
+                type: 'CREDIT',
+                status: 'COMPLETED',
+                amountCents,
+                currency: agentWallet.currency,
+                balanceAfterCents: agentNewBal,
+                reference: `${ref}-AGT`,
+                description: dto.note ? `Payout received: ${dto.note}` : 'Payout received',
+                completedAt: new Date(),
+                metadata: { businessId: dto.businessId, taskId: dto.taskId } as any,
+              },
+            });
+          }
+        }
+
+        // 3. Create completed payout record
+        return tx.payout.create({
+          data: {
+            agentId: dto.agentId ?? dto.businessId ?? 'platform',
+            amountCents,
+            method: dto.method ?? 'MANUAL',
+            reference: ref,
+            status: 'COMPLETED',
+            processedAt: new Date(),
+            metadata: {
+              type: dto.type,
+              businessId: dto.businessId,
+              taskId: dto.taskId,
+              note: dto.note,
+            } as any,
+          },
+        });
+      });
+    }
+
+    // Standard self-serve payout request (agent-initiated, queued for approval)
+    if (!dto.agentId) throw new BadRequestException('agentId required for standard payout');
+    const wallet = await this.prisma.wallet.findFirst({
+      where: { ownerType: 'AGENT', ownerId: dto.agentId },
     });
     if (!wallet) throw new NotFoundException('Agent wallet not found');
-    if (wallet.balanceCents < BigInt(dto.amountCents)) {
+    if (wallet.balanceCents < amountCents) {
       throw new BadRequestException('Insufficient balance');
     }
     return this.prisma.payout.create({
       data: {
         agentId: dto.agentId,
-        amountCents: BigInt(dto.amountCents),
+        amountCents,
         method: dto.method,
         destination: dto.destination,
       },
@@ -292,28 +371,74 @@ export class PaymentsService {
   }
 
   async listPayouts(agentId?: string) {
-    return this.prisma.payout.findMany({
+    const payouts = await this.prisma.payout.findMany({
       where: agentId ? { agentId } : undefined,
       orderBy: { createdAt: 'desc' },
+      include: {
+        agent: {
+          include: { user: { select: { id: true, name: true, email: true } } },
+        },
+      },
     });
+    return payouts.map((p) => ({
+      id: p.id,
+      agentId: p.agentId,
+      agentName: p.agent?.user?.name ?? '—',
+      agentEmail: p.agent?.user?.email ?? '—',
+      amount: Number(p.amountCents) / 100,
+      currency: p.currency,
+      status: p.status,
+      method: p.method,
+      destination: p.destination,
+      reference: p.reference,
+      createdAt: p.createdAt,
+      processedAt: p.processedAt,
+    }));
   }
 
   // ---- Invoices ----
+  private shapeInvoice(inv: any) {
+    return {
+      id: inv.id,
+      businessId: inv.businessId,
+      number: inv.number,
+      amount: Number(inv.amountCents) / 100,
+      amountCents: Number(inv.amountCents),
+      tax: Number(inv.taxCents) / 100,
+      taxCents: Number(inv.taxCents),
+      total: Number(inv.totalCents) / 100,
+      totalCents: Number(inv.totalCents),
+      currency: inv.currency,
+      status: inv.status,
+      description: (inv.metadata as any)?.description ?? null,
+      issuedAt: inv.issuedAt,
+      dueAt: inv.dueAt,
+      paidAt: inv.paidAt,
+      lineItems: inv.lineItems,
+      createdAt: inv.createdAt,
+      updatedAt: inv.updatedAt,
+    };
+  }
+
   async createInvoice(dto: CreateInvoiceDto) {
     const tax = dto.taxCents ?? 0;
     const total = dto.amountCents + tax;
     const number = `INV-${Date.now()}`;
-    return this.prisma.invoice.create({
+    const inv = await this.prisma.invoice.create({
       data: {
         businessId: dto.businessId,
         number,
         amountCents: BigInt(dto.amountCents),
         taxCents: BigInt(tax),
         totalCents: BigInt(total),
-        currency: dto.currency ?? 'USD',
+        currency: dto.currency ?? 'KES',
         lineItems: (dto.lineItems ?? []) as any,
+        ...(dto.dueAt ? { dueAt: new Date(dto.dueAt) } : {}),
+        ...(dto.issuedAt ? { issuedAt: new Date(dto.issuedAt) } : {}),
+        ...(dto.description ? { metadata: { description: dto.description } } : {}),
       },
     });
+    return this.shapeInvoice(inv);
   }
 
   async updateInvoiceStatus(id: string, dto: UpdateInvoiceStatusDto) {
@@ -322,14 +447,16 @@ export class PaymentsService {
     const data: any = { status: dto.status };
     if (dto.status === 'ISSUED' && !inv.issuedAt) data.issuedAt = new Date();
     if (dto.status === 'PAID') data.paidAt = new Date();
-    return this.prisma.invoice.update({ where: { id }, data });
+    const updated = await this.prisma.invoice.update({ where: { id }, data });
+    return this.shapeInvoice(updated);
   }
 
   async listInvoices(businessId?: string) {
-    return this.prisma.invoice.findMany({
+    const invoices = await this.prisma.invoice.findMany({
       where: businessId ? { businessId } : undefined,
       orderBy: { createdAt: 'desc' },
     });
+    return invoices.map(i => this.shapeInvoice(i));
   }
 
   // ---- Agent self-serve wallet ----

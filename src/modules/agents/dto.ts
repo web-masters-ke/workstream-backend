@@ -1,5 +1,6 @@
 import {
   IsArray,
+  IsEmail,
   IsEnum,
   IsInt,
   IsOptional,
@@ -11,6 +12,7 @@ import {
 import { Type } from 'class-transformer';
 import {
   AgentStatus,
+  AgentType,
   AvailabilityStatus,
   KycStatus,
 } from '@prisma/client';
@@ -120,6 +122,44 @@ export class AddAvailabilitySlotDto {
   @IsString()
   @IsOptional()
   timezone?: string;
+}
+
+export class InviteAgentDto {
+  @IsEmail()
+  email!: string;
+
+  @IsString()
+  @IsOptional()
+  firstName?: string;
+
+  @IsString()
+  @IsOptional()
+  lastName?: string;
+
+  @IsString()
+  @IsOptional()
+  phone?: string;
+
+  @IsUUID()
+  @IsOptional()
+  businessId?: string;
+
+  @IsArray()
+  @IsString({ each: true })
+  @IsOptional()
+  skills?: string[];
+
+  @IsInt()
+  @IsOptional()
+  hourlyRateCents?: number;
+
+  @IsEnum(['EMPLOYEE', 'FREELANCER'])
+  @IsOptional()
+  agentType?: AgentType;
+
+  @IsString()
+  @IsOptional()
+  personalMessage?: string;
 }
 
 export class ListAgentsDto extends PaginationDto {

@@ -66,6 +66,22 @@ async function main() {
     },
   });
 
+  await prisma.user.upsert({
+    where: { email: 'benjaminkakaimasai@gmail.com' },
+    update: {},
+    create: {
+      email: 'benjaminkakaimasai@gmail.com',
+      passwordHash: pw,
+      firstName: 'Benjamin',
+      lastName: 'Kakai',
+      name: 'Benjamin Kakai',
+      role: 'BUSINESS',
+      status: 'ACTIVE',
+      emailVerified: true,
+      phoneVerified: true,
+    },
+  });
+
   const bizOwner = await prisma.user.create({
     data: {
       email: 'owner@acme.com',
@@ -141,10 +157,12 @@ async function main() {
     data: { businessId: acme.id, name: 'Sales Ops', description: 'Lead qualification & follow-ups' },
   });
 
+  const benjamin = await prisma.user.findUnique({ where: { email: 'benjaminkakaimasai@gmail.com' } });
   await prisma.businessMember.createMany({
     data: [
       { businessId: acme.id, userId: bizOwner.id, workspaceId: acmeWs1.id, role: 'OWNER', joinedAt: new Date() },
       { businessId: acme.id, userId: supervisor.id, workspaceId: acmeWs1.id, role: 'MANAGER', joinedAt: new Date() },
+      ...(benjamin ? [{ businessId: acme.id, userId: benjamin.id, role: 'OWNER' as const, joinedAt: new Date() }] : []),
     ],
   });
 

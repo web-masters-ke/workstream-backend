@@ -16,19 +16,43 @@ import {
 export class WorkforceService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private readonly shiftInclude = {
+    agent: { include: { user: { select: { id: true, name: true, email: true } } } },
+    business: { select: { id: true, name: true } },
+  };
+
+  private shapeShift(s: any) {
+    return {
+      id: s.id,
+      agentId: s.agentId,
+      agentName: s.agent?.user?.name ?? s.agent?.user?.email ?? '—',
+      businessId: s.businessId ?? null,
+      businessName: s.business?.name ?? null,
+      startAt: s.startAt,
+      endAt: s.endAt,
+      status: s.status,
+      notes: s.notes ?? null,
+      createdAt: s.createdAt,
+      updatedAt: s.updatedAt,
+    };
+  }
+
   // ---- Shifts ----
   async createShift(dto: CreateShiftDto) {
     if (new Date(dto.endAt) <= new Date(dto.startAt)) {
       throw new BadRequestException('endAt must be after startAt');
     }
-    return this.prisma.shift.create({
+    const s = await this.prisma.shift.create({
       data: {
         agentId: dto.agentId,
+        businessId: (dto as any).businessId ?? null,
         startAt: new Date(dto.startAt),
         endAt: new Date(dto.endAt),
         notes: dto.notes,
       },
+      include: this.shiftInclude,
     });
+    return this.shapeShift(s);
   }
 
   async listShifts(dto: ListShiftsDto) {
@@ -41,29 +65,34 @@ export class WorkforceService {
       if (dto.from) where.startAt.gte = new Date(dto.from);
       if (dto.to) where.startAt.lte = new Date(dto.to);
     }
-    const [items, total] = await this.prisma.$transaction([
+    const [raw, total] = await this.prisma.$transaction([
       this.prisma.shift.findMany({
         where,
         skip,
         take: limit,
         orderBy: { startAt: 'asc' },
+        include: this.shiftInclude,
       }),
       this.prisma.shift.count({ where }),
     ]);
-    return { items, total, page, limit };
+    return { items: raw.map((s) => this.shapeShift(s)), total, page, limit };
   }
 
   async updateShift(id: string, dto: UpdateShiftDto) {
     const s = await this.prisma.shift.findUnique({ where: { id } });
     if (!s) throw new NotFoundException('Shift not found');
-    return this.prisma.shift.update({
+    const updated = await this.prisma.shift.update({
       where: { id },
       data: {
-        ...dto,
-        startAt: dto.startAt ? new Date(dto.startAt) : undefined,
-        endAt: dto.endAt ? new Date(dto.endAt) : undefined,
+        ...(dto.status && { status: dto.status }),
+        ...(dto.notes !== undefined && { notes: dto.notes }),
+        ...((dto as any).businessId !== undefined && { businessId: (dto as any).businessId || null }),
+        ...(dto.startAt && { startAt: new Date(dto.startAt) }),
+        ...(dto.endAt && { endAt: new Date(dto.endAt) }),
       },
+      include: this.shiftInclude,
     });
+    return this.shapeShift(updated);
   }
 
   async deleteShift(id: string) {

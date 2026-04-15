@@ -4,7 +4,7 @@
  * Task model, this controller returns tasks shaped as Job objects so the
  * client-web pages work without a schema migration.
  */
-import { Controller, Get, Post, Patch, Delete, Body, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Post, Patch, Delete, Body, Param, ParseUUIDPipe, Query, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { CurrentUser, JwtUser } from '../../common/decorators/current-user.decorator';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -19,6 +19,7 @@ function taskToJob(t: any) {
     status: t.status === 'PENDING' ? 'PUBLISHED'
       : t.status === 'ASSIGNED' ? 'IN_PROGRESS'
       : t.status === 'IN_PROGRESS' ? 'IN_PROGRESS'
+      : t.status === 'UNDER_REVIEW' ? 'IN_PROGRESS'
       : t.status === 'COMPLETED' ? 'COMPLETED'
       : t.status === 'CANCELLED' ? 'CANCELLED'
       : t.status === 'FAILED' ? 'CANCELLED'
@@ -49,7 +50,7 @@ export class JobsController {
     @CurrentUser() user: JwtUser,
     @Query('limit') limit = '20',
     @Query('page') page = '1',
-    @Query('status') status?: string,
+    @Query('status') _status?: string,
     @Query('priority') priority?: string,
   ) {
     const take = Math.min(Number(limit) || 20, 100);
@@ -79,11 +80,15 @@ export class JobsController {
       where: { userId: user.sub },
       select: { businessId: true },
     });
+    const businessId = member?.businessId ?? dto.businessId;
+    if (!businessId) {
+      throw new BadRequestException('Your account is not linked to any business. Re-run the database seed or contact your administrator.');
+    }
     const task = await this.prisma.task.create({
       data: {
         title: dto.title,
         description: dto.description ?? '',
-        businessId: member?.businessId ?? dto.businessId,
+        businessId,
         workspaceId: dto.workspaceId ?? undefined,
         priority: dto.priority ?? 'MEDIUM',
         slaMinutes: dto.slaMinutes ?? 60,
