@@ -23,6 +23,7 @@ import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { QAModule } from './modules/qa/qa.module';
 import { MarketplaceModule } from './modules/marketplace/marketplace.module';
+import { HealthModule } from './modules/health/health.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { MarketplaceModule } from './modules/marketplace/marketplace.module';
     AdminModule,
     QAModule,
     MarketplaceModule,
+    HealthModule,
   ],
   providers: [
     { provide: APP_INTERCEPTOR, useClass: TransformInterceptor },
