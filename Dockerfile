@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:20-alpine AS builder
 
 # Prisma needs OpenSSL on Alpine
 RUN apk add --no-cache openssl
@@ -6,14 +6,75 @@ RUN apk add --no-cache openssl
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm install
+RUN npm ci
 
 COPY . .
 
 RUN npx prisma generate
 RUN npm run build
 
+# --- Production stage ---
+FROM node:20-alpine
+
+RUN apk add --no-cache openssl
+
+WORKDIR /app
+
+# Build args → env vars (required for runtime)
+ARG NODE_ENV=production
+ARG PORT=3000
+ARG DATABASE_URL
+ARG JWT_SECRET
+ARG JWT_ACCESS_TTL=900
+ARG JWT_REFRESH_TTL=2592000
+ARG MEDIA_DRIVER=local
+ARG MEDIA_LOCAL_DIR=./uploads
+ARG MEDIA_PUBLIC_BASE_URL
+ARG APP_URL
+ARG BREVO_API_KEY
+ARG BREVO_FROM_EMAIL
+ARG EMAIL_FROM_NAME
+ARG JAAS_APP_ID
+ARG JAAS_KEY_ID
+ARG JAAS_PRIVATE_KEY
+ARG BONGA_SMS_URL
+ARG BONGA_API_KEY
+ARG BONGA_API_SECRET
+ARG BONGA_CLIENT_ID
+ARG BONGA_SERVICE_ID
+
+ENV NODE_ENV=$NODE_ENV \
+    PORT=$PORT \
+    DATABASE_URL=$DATABASE_URL \
+    JWT_SECRET=$JWT_SECRET \
+    JWT_ACCESS_TTL=$JWT_ACCESS_TTL \
+    JWT_REFRESH_TTL=$JWT_REFRESH_TTL \
+    MEDIA_DRIVER=$MEDIA_DRIVER \
+    MEDIA_LOCAL_DIR=$MEDIA_LOCAL_DIR \
+    MEDIA_PUBLIC_BASE_URL=$MEDIA_PUBLIC_BASE_URL \
+    APP_URL=$APP_URL \
+    BREVO_API_KEY=$BREVO_API_KEY \
+    BREVO_FROM_EMAIL=$BREVO_FROM_EMAIL \
+    EMAIL_FROM_NAME=$EMAIL_FROM_NAME \
+    JAAS_APP_ID=$JAAS_APP_ID \
+    JAAS_KEY_ID=$JAAS_KEY_ID \
+    JAAS_PRIVATE_KEY=$JAAS_PRIVATE_KEY \
+    BONGA_SMS_URL=$BONGA_SMS_URL \
+    BONGA_API_KEY=$BONGA_API_KEY \
+    BONGA_API_SECRET=$BONGA_API_SECRET \
+    BONGA_CLIENT_ID=$BONGA_CLIENT_ID \
+    BONGA_SERVICE_ID=$BONGA_SERVICE_ID
+
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/prisma ./prisma
+
+RUN mkdir -p uploads
+
 EXPOSE 3000
 
-# NestJS outputs to dist/src/main (no rootDir set in tsconfig)
-CMD sh -c "npx prisma migrate deploy && npx ts-node prisma/seed.ts || true && node dist/src/main"
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+  CMD wget -qO- http://localhost:3000/api/v1/health || exit 1
+
+CMD sh -c "npx prisma migrate deploy && node dist/src/main"
