@@ -91,6 +91,11 @@ jobs:
             --build-arg "JAAS_APP_ID=${{ secrets.JAAS_APP_ID }}" \
             --build-arg "JAAS_KEY_ID=${{ secrets.JAAS_KEY_ID }}" \
             --build-arg "JAAS_PRIVATE_KEY=${{ secrets.JAAS_PRIVATE_KEY }}" \
+            --build-arg "AWS_REGION=${{ secrets.AWS_REGION }}" \
+            --build-arg "AWS_ACCESS_KEY_ID=${{ secrets.AWS_ACCESS_KEY_ID }}" \
+            --build-arg "AWS_SECRET_ACCESS_KEY=${{ secrets.AWS_SECRET_ACCESS_KEY }}" \
+            --build-arg "S3_BUCKET=${{ secrets.S3_BUCKET }}" \
+            --build-arg "S3_PREFIX=${{ secrets.S3_PREFIX }}" \
             --build-arg "BONGA_SMS_URL=${{ secrets.BONGA_SMS_URL }}" \
             --build-arg "BONGA_API_KEY=${{ secrets.BONGA_API_KEY }}" \
             --build-arg "BONGA_API_SECRET=${{ secrets.BONGA_API_SECRET }}" \
