@@ -216,8 +216,8 @@ export class AgentsService {
     const appUrl = process.env.APP_URL ?? 'http://localhost:3200';
     const name = fullName ?? dto.email;
 
-    // Send email
-    await this.mail.send({
+    // Send email (fire-and-forget — don't fail the invite if email/SMS fails)
+    this.mail.send({
       to: dto.email,
       subject: "You've been invited to join Workstream",
       html: `
@@ -234,14 +234,14 @@ export class AgentsService {
         </div>
       `,
       text: `You've been invited to Workstream.\nLogin: ${appUrl}\nEmail: ${dto.email}\nTemp password: ${tempPassword}\n\nPlease change your password after first login.`,
-    });
+    }).catch(() => {});
 
     // Send SMS if phone provided
     if (dto.phone) {
-      await this.sms.send({
+      this.sms.send({
         to: dto.phone.replace(/\D/g, ''),
         message: `Workstream invite: login at ${appUrl} | Email: ${dto.email} | Temp pass: ${tempPassword} | Change password on first login.`,
-      });
+      }).catch(() => {});
     }
 
     return agent;
